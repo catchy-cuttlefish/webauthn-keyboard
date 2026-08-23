@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>Write text to the key with WebAuthn</title>
+<style>
+  body { font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+         max-width: 46rem; margin: 2rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.15rem; }
+  textarea { width: 100%; height: 6rem; font: inherit; }
+  button { font: inherit; padding: .4rem .8rem; margin-right: .4rem; }
+  #log { white-space: pre-wrap; background: #111; color: #ddd;
+         padding: .75rem; border-radius: 4px; min-height: 8rem; }
+  .warn { color: #b40; }
+  small { color: #666; }
+</style>
+
+<h1>Store text on the key, then press the button to type it</h1>
+
+<p><small>Served from <code>localhost</code> or HTTPS. The text travels in
+<code>user.id</code>, the one <code>create()</code> field a page can fill with
+arbitrary bytes that reaches the authenticator untouched &mdash; the browser
+neither hashes nor encrypts it.</small></p>
+
+<textarea id="data" placeholder="ASCII to store on the key..."
+>Correct-Horse_Battery+Staple</textarea>
+<p><small id="count"></small></p>
+
+<p>
+  <button id="write">Write to key</button>
+  <button id="read">Read back</button>
+</p>
+
+<div id="log"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const logEl = $("log");
+const enc = new TextEncoder(), dec = new TextDecoder();
+
+// user.id is capped at 64 bytes by the WebAuthn spec, and byte 0 is our
+// control byte: 0 = replace the stored text, 1 = append to it. So each
+// create() carries at most 63 bytes and longer strings need several calls.
+const CHUNK = 63;
+
+function log(msg, cls) {
+  const t = new Date().toISOString().slice(11, 19);
+  logEl.innerHTML += `<span class="${cls || ""}">[${t}] ${msg}</span>\n`;
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+const rand = n => crypto.getRandomValues(new Uint8Array(n));
+
+$("data").addEventListener("input", updateCount);
+function updateCount() {
+  const n = enc.encode($("data").value).length;
+  const chunks = Math.max(1, Math.ceil(n / CHUNK));
+  $("count").textContent =
+    `${n} bytes = ${chunks} registration${chunks > 1 ? "s" : ""} ` +
+    `(~${(chunks * 5).toFixed(0)} s, the key does one P-256 keygen per call)`;
+}
+updateCount();
+
+// One create() call = one chunk written.
+async function writeChunk(bytes, append) {
+  const userId = new Uint8Array(1 + bytes.length);
+  userId[0] = append ? 1 : 0;
+  userId.set(bytes, 1);
+
+  const cred = await navigator.credentials.create({
+    publicKey: {
+      challenge: rand(32),
+      rp: { id: location.hostname, name: "type-out demo" },
+      user: { id: userId, name: "text", displayName: "text" },
+      pubKeyCredParams: [{ type: "public-key", alg: -7 }],   // ES256 only
+      authenticatorSelection: {
+        authenticatorAttachment: "cross-platform",
+        residentKey: "required",       // only resident creds write the slot
+        userVerification: "discouraged",
+      },
+      timeout: 120000,
+      attestation: "none",
+    },
+  });
+  return cred;
+}
+
+$("write").onclick = async () => {
+  try {
+    const bytes = enc.encode($("data").value);
+    if (bytes.length === 0) { log("nothing to write", "warn"); return; }
+    const chunks = [];
+    for (let i = 0; i < bytes.length; i += CHUNK) chunks.push(bytes.slice(i, i + CHUNK));
+
+    log(`writing ${bytes.length} bytes as ${chunks.length} chunk(s)...`);
+    for (let i = 0; i < chunks.length; i++) {
+      log(`  chunk ${i + 1}/${chunks.length} (${chunks[i].length} B) - ~5 s`);
+      await writeChunk(chunks[i], i > 0);
+    }
+    log("done - press the button on pin 7 to type it");
+  } catch (e) {
+    log(`write failed: ${e.name}: ${e.message}`, "warn");
+  }
+};
+
+// An assertion returns the user handle, i.e. the last chunk written. That is
+// enough to confirm the key stored what we sent, but it is not a full read of
+// the slot: the firmware deliberately never hands the text back over USB.
+$("read").onclick = async () => {
+  try {
+    log("requesting assertion (~5 s)...");
+    const a = await navigator.credentials.get({
+      publicKey: {
+        challenge: rand(32),
+        rpId: location.hostname,
+        userVerification: "discouraged",
+        timeout: 120000,
+      },
+    });
+    const uh = new Uint8Array(a.response.userHandle);
+    if (!uh.length) { log("no user handle returned", "warn"); return; }
+    const append = uh[0] === 1;
+    log(`last chunk (${append ? "appended" : "replaced"}): `
+        + JSON.stringify(dec.decode(uh.slice(1))));
+  } catch (e) {
+    log(`read failed: ${e.name}: ${e.message}`, "warn");
+  }
+};
+
+if (!window.PublicKeyCredential) log("this browser has no WebAuthn support", "warn");
+else if (!window.isSecureContext) log("not a secure context - use localhost or HTTPS", "warn");
+</script>

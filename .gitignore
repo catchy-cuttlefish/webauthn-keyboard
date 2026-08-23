@@ -1,0 +1,7 @@
+# arduino-cli build output
+/build/
+*.hex
+*.elf
+
+__pycache__/
+*.pyc
