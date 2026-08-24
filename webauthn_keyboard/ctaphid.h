@@ -26,10 +26,8 @@
 // should be able to read it back over USB.
 #define CTAPHID_TEXTINFO  0x41
 #define CTAPHID_BOOTLOADER 0x42
-#define CTAPHID_TYPENOW    0x43   // test hook; compiled out unless ALLOW_REMOTE_TYPE
 
 #define ERR_INVALID_CMD   0x01
-#define ERR_INVALID_PAR   0x02
 #define ERR_INVALID_LEN   0x03
 #define ERR_INVALID_SEQ   0x04
 #define ERR_MSG_TIMEOUT   0x05

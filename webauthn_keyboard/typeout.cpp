@@ -1,8 +1,6 @@
 #include "typeout.h"
 #include "config.h"
 
-#if ENABLE_TYPEOUT
-
 #include "storage.h"
 #include "FidoHID.h"
 
@@ -34,16 +32,10 @@ static const uint8_t asciiToKey[128] PROGMEM = {
 #define KEY_SHIFT_FLAG 0x80
 #define MOD_LSHIFT     0x02
 
-uint16_t typeout_last_chars = 0;
-uint16_t typeout_last_fails = 0;
-
-static bool     busy      = false;
 static bool     wasDown   = false;
 static uint32_t lastEdge  = 0;
 static uint32_t pressedAt = 0;
 static bool     armed     = false;   // long-press already consumed?
-
-bool typeout_busy(void) { return busy; }
 
 void typeout_init(void)
 {
@@ -51,19 +43,12 @@ void typeout_init(void)
   wasDown = BTN_PRESSED();
 }
 
-static void type_string(void);
-
-void typeout_trigger(void) { type_string(); }
-
 static void type_string(void)
 {
   uint16_t n = store_text_len();
   if (n == 0 || !FidoHID.keyboardReady()) return;
 
-  busy = true;
   LED_ON();
-  typeout_last_chars = 0;
-  typeout_last_fails = 0;
 
   for (uint16_t i = 0; i < n; i++) {
     uint8_t c = store_text_byte(i);
@@ -72,24 +57,16 @@ static void type_string(void)
     if (k == 0) continue;
 
     uint8_t mod = (k & KEY_SHIFT_FLAG) ? MOD_LSHIFT : 0;
-    if (!FidoHID.keyReport(mod, k & 0x7F)) typeout_last_fails++;
+    FidoHID.keyReport(mod, k & 0x7F);
     delay(TYPE_KEY_DELAY_MS);
-    if (!FidoHID.keyReport(0, 0)) typeout_last_fails++;  // release, so repeated
-    delay(TYPE_KEY_DELAY_MS);                            // letters register
-    typeout_last_chars++;
+    FidoHID.keyReport(0, 0);        // release, so repeated letters register
+    delay(TYPE_KEY_DELAY_MS);
   }
 
-#if TYPE_PRESS_ENTER
-  FidoHID.keyReport(0, 0x28);
-  delay(TYPE_KEY_DELAY_MS);
-  FidoHID.keyReport(0, 0);
-#endif
 
   LED_OFF();
-  busy = false;
 }
 
-#if ENABLE_LONG_PRESS
 static void enter_bootloader(void)
 {
   // Blink fast so it is obvious the long press registered.
@@ -101,7 +78,6 @@ static void enter_bootloader(void)
   wdt_enable(WDTO_120MS);
   for (;;) { }
 }
-#endif
 
 void typeout_poll(void)
 {
@@ -123,23 +99,9 @@ void typeout_poll(void)
     return;
   }
 
-#if ENABLE_LONG_PRESS
   if (down && armed && (now - pressedAt) >= TYPE_BOOTLOADER_HOLD_MS) {
     armed = false;
     enter_bootloader();
   }
-#else
-  (void)pressedAt;
-#endif
 }
 
-#else   // !ENABLE_TYPEOUT -- keyboard compiled out entirely
-
-uint16_t typeout_last_chars = 0;
-uint16_t typeout_last_fails = 0;
-void typeout_init(void)    {}
-void typeout_poll(void)    {}
-void typeout_trigger(void) {}
-bool typeout_busy(void)    { return false; }
-
-#endif

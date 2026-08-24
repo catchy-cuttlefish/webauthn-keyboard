@@ -54,8 +54,8 @@ function updateCount() {
   const n = enc.encode($("data").value).length;
   const chunks = Math.max(1, Math.ceil(n / CHUNK));
   $("count").textContent =
-    `${n} bytes = ${chunks} registration${chunks > 1 ? "s" : ""} ` +
-    `(~${(chunks * 5).toFixed(0)} s, the key does one P-256 keygen per call)`;
+    `${n} bytes = ${chunks} registration${chunks > 1 ? "s" : ""}` +
+    (n > 512 ? "  \u2190 exceeds the 512-byte capacity" : "");
 }
 updateCount();
 
@@ -92,7 +92,7 @@ $("write").onclick = async () => {
 
     log(`writing ${bytes.length} bytes as ${chunks.length} chunk(s)...`);
     for (let i = 0; i < chunks.length; i++) {
-      log(`  chunk ${i + 1}/${chunks.length} (${chunks[i].length} B) - ~5 s`);
+      log(`  chunk ${i + 1}/${chunks.length} (${chunks[i].length} B)`);
       await writeChunk(chunks[i], i > 0);
     }
     log("done - press the button on pin 7 to type it");
@@ -106,7 +106,7 @@ $("write").onclick = async () => {
 // the slot: the firmware deliberately never hands the text back over USB.
 $("read").onclick = async () => {
   try {
-    log("requesting assertion (~5 s)...");
+    log("requesting assertion...");
     const a = await navigator.credentials.get({
       publicKey: {
         challenge: rand(32),

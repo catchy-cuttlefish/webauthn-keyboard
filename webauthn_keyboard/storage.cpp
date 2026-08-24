@@ -1,6 +1,5 @@
 #include "storage.h"
 #include "sha256.h"
-#include "typeout.h"
 #include <Arduino.h>
 #include <EEPROM.h>
 #include <string.h>
@@ -53,22 +52,6 @@ static void ee_write(uint16_t addr, const uint8_t *src, uint16_t len)
 
 // ---------------------------------------------------------------------------
 
-#if ENABLE_LARGEBLOB
-void store_blob_reset(void)
-{
-  // The empty largeBlob array: CBOR `[]` (0x80) followed by the leading 16
-  // bytes of SHA-256(0x80), per CTAP2.1 §6.10.
-  uint8_t empty = 0x80;
-  uint8_t digest[32];
-  sha256(&empty, 1, digest);
-
-  EEPROM.update(EE_BLOB_DATA, empty);
-  ee_write(EE_BLOB_DATA + 1, digest, 16);
-  store_blob_commit_len(17);
-}
-
-#endif  // ENABLE_LARGEBLOB
-
 void store_init(void)
 {
   uint8_t magic[4];
@@ -87,13 +70,8 @@ void store_reset(void)
 
   for (uint8_t i = 0; i < 4; i++) EEPROM.update(EE_COUNTER_ADDR + i, 0);
   EEPROM.update(EE_RK_VALID, 0);
-#if ENABLE_LARGEBLOB
-  store_blob_reset();
-#endif
-#if ENABLE_TYPEOUT
   EEPROM.update(EE_TEXT_LEN, 0);
   EEPROM.update(EE_TEXT_LEN + 1, 0);
-#endif
   ee_write(EE_MAGIC_ADDR, EE_MAGIC, 4);
 }
 
@@ -146,43 +124,7 @@ void store_rk_put(const uint8_t rpIdHash[32], const uint8_t nonce[CRED_NONCE_LEN
   EEPROM.update(EE_RK_VALID, 1);
 }
 
-#if ENABLE_LARGEBLOB
-uint16_t store_blob_len(void)
-{
-  uint16_t n = (uint16_t)EEPROM.read(EE_BLOB_LEN) |
-               ((uint16_t)EEPROM.read(EE_BLOB_LEN + 1) << 8);
-  return n > LARGE_BLOB_MAX ? 0 : n;
-}
-
-void store_blob_commit_len(uint16_t len)
-{
-  EEPROM.update(EE_BLOB_LEN,     (uint8_t)len);
-  EEPROM.update(EE_BLOB_LEN + 1, (uint8_t)(len >> 8));
-}
-
-void store_blob_read(uint16_t offset, uint8_t *dst, uint16_t len)
-{
-  if (offset >= LARGE_BLOB_MAX) return;
-  if ((uint32_t)offset + len > LARGE_BLOB_MAX) len = LARGE_BLOB_MAX - offset;
-  ee_read(EE_BLOB_DATA + offset, dst, len);
-}
-
-void store_blob_write(uint16_t offset, const uint8_t *src, uint16_t len)
-{
-  if (offset >= LARGE_BLOB_MAX) return;
-  if ((uint32_t)offset + len > LARGE_BLOB_MAX) len = LARGE_BLOB_MAX - offset;
-
-  for (uint16_t i = 0; i < len; i++) {
-    EEPROM.update(EE_BLOB_DATA + offset + i, src[i]);
-    // ~3.3 ms per changed byte; nudge the host every 32 bytes.
-    if ((i & 0x1F) == 0x1F && store_keepalive_hook) store_keepalive_hook();
-  }
-}
-
-#endif  // ENABLE_LARGEBLOB
-
 // --- type-out text -----------------------------------------------------------
-#if ENABLE_TYPEOUT
 
 uint16_t store_text_len(void)
 {
@@ -220,4 +162,3 @@ void store_text_chunk(const uint8_t *src, uint16_t len)
   if (len < 1) return;
   text_store(src + 1, len - 1, src[0] ? store_text_len() : 0);
 }
-#endif  // ENABLE_TYPEOUT

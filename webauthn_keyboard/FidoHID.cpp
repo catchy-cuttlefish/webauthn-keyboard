@@ -80,9 +80,9 @@ typedef struct {
   EndpointDescriptor     kbIn;
 } FidoHIDDescriptor;
 
-#define IF_FIDO (pluggedInterface)
-#define IF_KB   (pluggedInterface + 1)
-#define EP_KB   (pluggedEndpoint + 2)
+#define IF_FIDO ((uint8_t)(pluggedInterface))
+#define IF_KB   ((uint8_t)(pluggedInterface + 1))
+#define EP_KB   ((uint8_t)(pluggedEndpoint + 2))
 
 FidoHID_::FidoHID_()
   : PluggableUSBModule(3, 2, epType), protocol(1), idle(0), kbReady(false)
@@ -119,9 +119,9 @@ int FidoHID_::getDescriptor(USBSetup &setup)
   if (setup.bmRequestType != REQUEST_DEVICETOHOST_STANDARD_INTERFACE) return 0;
   if (setup.wValueH != HID_REPORT_DESCRIPTOR_TYPE) return 0;
 
-  if (setup.wIndex == IF_FIDO)
+  if (setup.wIndex == (uint16_t)IF_FIDO)
     return USB_SendControl(TRANSFER_PGM, fidoReportDescriptor, sizeof(fidoReportDescriptor));
-  if (setup.wIndex == IF_KB) {
+  if (setup.wIndex == (uint16_t)IF_KB) {
     // The host only fetches this once it is enumerating the keyboard, which is
     // a good proxy for "the interface is live".
     kbReady = true;
@@ -132,7 +132,7 @@ int FidoHID_::getDescriptor(USBSetup &setup)
 
 bool FidoHID_::setup(USBSetup &setup)
 {
-  if (setup.wIndex != IF_FIDO && setup.wIndex != IF_KB) return false;
+  if (setup.wIndex != (uint16_t)IF_FIDO && setup.wIndex != (uint16_t)IF_KB) return false;
 
   uint8_t r = setup.bRequest;
   uint8_t t = setup.bmRequestType;
@@ -163,10 +163,10 @@ void FidoHID_::send(const uint8_t *packet)
   USB_Send(pluggedEndpoint | TRANSFER_RELEASE, packet, FIDO_HID_PACKET_SIZE);
 }
 
-bool FidoHID_::keyReport(uint8_t modifier, uint8_t keycode)
+void FidoHID_::keyReport(uint8_t modifier, uint8_t keycode)
 {
   uint8_t r[8] = { modifier, 0, keycode, 0, 0, 0, 0, 0 };
-  return USB_Send(EP_KB | TRANSFER_RELEASE, r, sizeof(r)) == (int)sizeof(r);
+  USB_Send(EP_KB | TRANSFER_RELEASE, r, sizeof(r));
 }
 
 FidoHID_ FidoHID;

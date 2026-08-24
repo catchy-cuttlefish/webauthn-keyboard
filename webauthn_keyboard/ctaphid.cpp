@@ -102,7 +102,7 @@ static void handle_init(uint32_t cid, const uint8_t *payload, uint16_t len)
     if (nextCid == CID_BROADCAST || nextCid == 0) nextCid = 1;
   } else {
     newCid = cid;                     // resync of an existing channel
-    if (cid == activeCid) { ctap_large_blob_cancel(); reset_transaction(); }
+    if (cid == activeCid) reset_transaction();
   }
 
   uint8_t r[17];
@@ -135,22 +135,17 @@ static void dispatch(void)
 
     case CTAPHID_CBOR: {
       if (len < 1) { send_error(cid, ERR_INVALID_LEN); break; }
-      ctap_set_channel(cid);
       uint16_t rlen = ctap_handle(ioBuf, len, ioBuf);
       send_message(cid, CTAPHID_CBOR, ioBuf, rlen);
       break;
     }
 
     case CTAPHID_CANCEL:
-      // CANCEL has no response of its own; the CTAP2_ERR_KEEPALIVE_CANCEL
-      // status belongs to the command being cancelled. Since this device
-      // processes commands synchronously, by the time a CANCEL is dequeued the
-      // command has already answered, so there is nothing left to do but drop
-      // any partially written largeBlob.
-      ctap_large_blob_cancel();
+      // CANCEL has no response of its own, and commands are processed
+      // synchronously, so by the time one is dequeued the command it refers to
+      // has already answered. Nothing to do.
       break;
 
-#if ENABLE_TYPEOUT
     case CTAPHID_SETTEXT:
       if (len > TYPEOUT_MAX) { send_error(cid, ERR_INVALID_LEN); break; }
       store_text_set(ioBuf, len);
@@ -164,7 +159,6 @@ static void dispatch(void)
       send_message(cid, CTAPHID_TEXTINFO, r, sizeof(r));
       break;
     }
-#endif
 
     case CTAPHID_BOOTLOADER:
       // Same handshake the Arduino core uses for the 1200-baud touch: leave a
@@ -175,15 +169,6 @@ static void dispatch(void)
       wdt_enable(WDTO_120MS);
       for (;;) { }
 
-#if ALLOW_REMOTE_TYPE
-    case CTAPHID_TYPENOW: {
-      typeout_trigger();
-      uint8_t r[4] = { (uint8_t)(typeout_last_chars >> 8), (uint8_t)typeout_last_chars,
-                       (uint8_t)(typeout_last_fails >> 8), (uint8_t)typeout_last_fails };
-      send_message(cid, CTAPHID_TYPENOW, r, sizeof(r));
-      break;
-    }
-#endif
 
     case CTAPHID_MSG:
       // CAPABILITY_NMSG is advertised: no CTAP1/U2F support.
@@ -222,7 +207,6 @@ static void handle_packet(void)
     if (activeCid && cid != activeCid) { send_error(cid, ERR_CHANNEL_BUSY); return; }
     if (activeCid == cid && gotLen < expectedLen) {
       // Host restarted a message mid-stream; treat as a fresh transaction.
-      ctap_large_blob_cancel();
       reset_transaction();
     }
 
@@ -277,7 +261,6 @@ void ctaphid_poll(void)
   if (activeCid && gotLen < expectedLen &&
       (millis() - lastFrameMs) > FRAME_TIMEOUT_MS) {
     uint32_t cid = activeCid;
-    ctap_large_blob_cancel();
     reset_transaction();
     send_error(cid, ERR_MSG_TIMEOUT);
   }

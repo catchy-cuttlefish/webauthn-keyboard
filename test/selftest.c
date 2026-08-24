@@ -1,10 +1,10 @@
 // Host-side known-answer tests for the portable parts of the firmware.
-//   cc -O2 -o t test/selftest.c webauthn_largeblob/sha256.cpp webauthn_largeblob/cbor.cpp && ./t
+//   cc -O2 -o t test/selftest.c webauthn_keyboard/sha256.cpp webauthn_keyboard/cbor.cpp && ./t
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
-#include "../webauthn_largeblob/sha256.h"
-#include "../webauthn_largeblob/cbor.h"
+#include "../webauthn_keyboard/sha256.h"
+#include "../webauthn_keyboard/cbor.h"
 
 static int fails = 0;
 
@@ -104,16 +104,6 @@ static void test_hmac(void)
   }
 }
 
-// The exact bytes the authenticator must ship on a factory-fresh device:
-// CBOR [] followed by the first 16 bytes of SHA-256(0x80).
-static void test_empty_large_blob(void)
-{
-  uint8_t empty = 0x80, d[32];
-  puts("largeBlob empty-array checksum (CTAP2.1 6.10)");
-  sha256(&empty, 1, d);
-  check("trunc16(SHA256(0x80))", d, 16, "76be8b528d0075f7aae98d6fa57a6d3c");
-}
-
 static void test_cbor_roundtrip(void)
 {
   uint8_t buf[256];
@@ -202,7 +192,6 @@ int main(void)
 {
   test_sha256();
   test_hmac();
-  test_empty_large_blob();
   test_cbor_roundtrip();
   printf("\n%s\n", fails ? "FAILURES" : "all tests passed");
   return fails != 0;

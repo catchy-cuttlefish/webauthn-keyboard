@@ -28,8 +28,7 @@ public:
 
   // --- keyboard ---
   // Sends one 8-byte boot-protocol report: modifier byte + one keycode.
-  // Returns true if the host accepted the 8-byte interrupt-IN transfer.
-  bool keyReport(uint8_t modifier, uint8_t keycode);
+  void keyReport(uint8_t modifier, uint8_t keycode);
   // True once the host has configured the interface (SET_CONFIGURATION seen).
   bool keyboardReady() const { return kbReady; }
 

@@ -1,12 +1,10 @@
-"""Minimal CTAPHID client + largeBlob codec.
+"""Minimal CTAPHID client.
 
 Shared by test/ctaphid_test.py, tools/provision.py and
 tools/reboot_bootloader.py. Implements only what this project needs; it is not
 a general-purpose FIDO library (see python-fido2 for that).
 """
-import os, glob, struct, zlib, hashlib, secrets, select
-
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+import os, glob, struct, secrets, select
 
 BROADCAST = 0xFFFFFFFF
 PING, MSG, INIT, CBOR, CANCEL, KEEPALIVE, ERROR = 0x01, 0x03, 0x06, 0x10, 0x11, 0x3B, 0x3F
@@ -15,10 +13,7 @@ PING, MSG, INIT, CBOR, CANCEL, KEEPALIVE, ERROR = 0x01, 0x03, 0x06, 0x10, 0x11, 
 CTAPHID_SETTEXT    = 0x40
 CTAPHID_TEXTINFO   = 0x41
 CTAPHID_BOOTLOADER = 0x42
-CTAPHID_TYPENOW    = 0x43
 
-# Fallback only; ask the device with CTAPHID_TEXTINFO for the real capacity,
-# which depends on whether largeBlob was compiled in.
 TYPEOUT_MAX = 512
 
 
@@ -162,50 +157,3 @@ class Device:
             raise RuntimeError(f"device rejected SETTEXT (0x{cmd:02x})")
 
 
-# ------------------------------------------------------------ largeBlob ----
-def build_blob_array(key, data):
-    """Client-side largeBlob encoding, per WebAuthn / CTAP2.1 6.10.4."""
-    comp = zlib.compressobj(9, zlib.DEFLATED, -15)   # raw deflate
-    pt = comp.compress(data) + comp.flush()
-    nonce = secrets.token_bytes(12)
-    aad = b"blob" + struct.pack("<Q", len(data))
-    ct = AESGCM(key).encrypt(nonce, pt, aad)
-    arr = cbor_enc([{1: ct, 2: nonce, 3: len(data)}])
-    return arr + hashlib.sha256(arr).digest()[:16]
-
-
-def parse_blob_array(key, ser):
-    body, digest = ser[:-16], ser[-16:]
-    assert hashlib.sha256(body).digest()[:16] == digest, "array checksum mismatch"
-    for entry in cbor_dec(body)[0]:
-        aad = b"blob" + struct.pack("<Q", entry[3])
-        try:
-            pt = AESGCM(key).decrypt(entry[2], entry[1], aad)
-        except Exception:
-            continue                                 # entry for another credential
-        return zlib.decompressobj(-15).decompress(pt)
-    return None
-
-
-def blob_read(dev):
-    out = b""
-    while True:
-        st, r = dev.cbor(0x0C, {1: 1024, 3: len(out)})
-        assert st == 0, f"largeBlobs get failed: 0x{st:02x}"
-        frag = r[1]
-        if not frag:
-            break
-        out += frag
-    return out
-
-
-def blob_write(dev, ser, frag=256):
-    off = 0
-    while off < len(ser):
-        chunk = ser[off:off+frag]
-        p = {2: chunk, 3: off}
-        if off == 0:
-            p[4] = len(ser)
-        st, _ = dev.cbor(0x0C, p, timeout=20.0)
-        assert st == 0, f"largeBlobs set failed at offset {off}: 0x{st:02x}"
-        off += len(chunk)
