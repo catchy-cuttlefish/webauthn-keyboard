@@ -46,6 +46,17 @@ Danish, for comparison with US:
 Note the last row: some characters need *two* keystrokes, and several need
 AltGr, which the old firmware could not emit at all.
 
+Verified on hardware against a real Danish layout: the string
+
+```
+abcz ABCZ 0189 @#$&*()!? -_=+;:,./ []{}\|<> '"`^~
+```
+
+(9 AltGr keystrokes, 20 shifted, 23 plain, plus three dead-key sequences)
+was typed back byte for byte. The other 53 layouts are checked against the xkb
+data and round-trip tests, but only Danish and US have been through a physical
+keyboard.
+
 ### Stored format
 
 One byte per keystroke, so a password costs about as many bytes as it has
