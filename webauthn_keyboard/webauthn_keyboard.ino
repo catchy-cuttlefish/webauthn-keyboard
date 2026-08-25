@@ -4,8 +4,12 @@
  * The board enumerates as a FIDO2 security key plus a boot keyboard. A page
  * calls navigator.credentials.create() with the text in `user.id` -- the one
  * field a client passes to the authenticator verbatim, neither hashed like
- * `challenge` nor encrypted like `largeBlob`. The text lands in EEPROM, and
+ * `challenge` nor encrypted like `largeBlob`. The text lands in RAM, and
  * pressing the button on pin 7 types it into whatever has focus.
+ *
+ * The text and the credential are deliberately volatile: unplugging the board
+ * erases both, so an unpowered chip yields nothing to a programmer. The cost is
+ * that a browser must write the text again on every plug-in.
  *
  * `user.id` is capped at 64 bytes by the WebAuthn spec, and byte 0 is a control
  * byte (0 = replace, 1 = append), so one registration carries 63 bytes and
@@ -20,7 +24,7 @@
  * The consequences, plainly: this is not a security key and must not be
  * registered with a real relying party. Anyone can impersonate it. There is no
  * user-presence gate on CTAP operations, so any process that can open the HID
- * device can drive them. The typed text is stored in the clear, which is
+ * device can drive them. The typed text is held in the clear in RAM, which is
  * unavoidable for a device that types a secret on demand.
  */
 

@@ -11,7 +11,7 @@ import os, sys, struct, time, hashlib, secrets
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tools"))
 from ctaplib import (Device, PING, cbor_dec, find_fido_hidraw,
-                     CTAPHID_SETTEXT, CTAPHID_TEXTINFO)
+                     CTAPHID_SETTEXT, CTAPHID_TEXTINFO, CTAPHID_BOOTLOADER)
 
 ok_count = 0
 fail_count = 0
@@ -187,8 +187,29 @@ def main(path):
     st, _ = make_credential(dev, b"\x00x", alg=-257)
     check("RS256-only -> UNSUPPORTED_ALGORITHM (0x26)", st == 0x26, f"0x{st:02x}")
 
+    print("\nvolatility (text and credential live in RAM)")
+    doomed = b"should-not-survive-a-power-cycle"
+    make_credential(dev, b"\x00" + doomed)
+    check("text present before reboot",
+          text_info(dev)[1] == len(doomed), f"{text_info(dev)[1]}")
+    # Bouncing through the bootloader gives a real reset: Caterina runs, times
+    # out after ~8 s and starts the sketch again with freshly zeroed RAM. That
+    # is the closest thing to unplugging the board that can be done over USB.
+    print("       rebooting via the bootloader, ~12 s...")
+    dev.send(CTAPHID_BOOTLOADER, b"")
+    try:
+        dev.recv(timeout=2.0)
+    except Exception:
+        pass
+    time.sleep(14)
+    dev2 = Device(find_fido_hidraw())
+    dev2.init()
+    check("text is gone after reboot", text_info(dev2)[1] == 0, f"{text_info(dev2)[1]}")
+    st, _ = dev2.cbor(0x02, {1: RP, 2: secrets.token_bytes(32)}, timeout=30.0)
+    check("credential is gone after reboot -> NO_CREDENTIALS", st == 0x2E, f"0x{st:02x}")
+
     # Leave something sensible on the device for a manual button press.
-    make_credential(dev, b"\x00" + b"hello-from-webauthn")
+    make_credential(dev2, b"\x00" + b"hello-from-webauthn")
 
     print(f"\n{ok_count} passed, {fail_count} failed, {skip_count} skipped")
     return 1 if fail_count else 0

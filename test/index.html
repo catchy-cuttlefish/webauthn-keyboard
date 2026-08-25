@@ -18,7 +18,9 @@
 <p><small>Served from <code>localhost</code> or HTTPS. The text travels in
 <code>user.id</code>, the one <code>create()</code> field a page can fill with
 arbitrary bytes that reaches the authenticator untouched &mdash; the browser
-neither hashes nor encrypts it.</small></p>
+neither hashes nor encrypts it.<br>
+The key stores it in RAM: <strong>unplugging erases it</strong>, so write it
+again after every plug-in.</small></p>
 
 <textarea id="data" placeholder="ASCII to store on the key..."
 >Correct-Horse_Battery+Staple</textarea>

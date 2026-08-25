@@ -4,8 +4,12 @@ A CTAP2 authenticator for the Pro Micro / Leonardo that a web page can write
 ASCII into, and that types that ASCII on a button press.
 
 A browser calls `navigator.credentials.create()`; the text rides along in
-`user.id` and lands in EEPROM. Press the button and the board types it into
+`user.id` and lands in RAM. Press the button and the board types it into
 whatever has focus. No host-side tool in the loop.
+
+**The text is volatile.** Unplug the board and it is gone, along with the
+credential — you write it again from a browser on every plug-in. That is the
+deliberate trade: nothing is left on the chip for a programmer to read.
 
 ## How the text gets in
 
@@ -19,7 +23,7 @@ reaches the authenticator untouched. The client neither hashes it (unlike
 | `0` | replace the stored text with the remaining bytes |
 | `1` | append the remaining bytes |
 
-So one registration carries 63 bytes; longer strings take several, at ~0.2 s
+So one registration carries 63 bytes; longer strings take several, at ~20 ms
 each. Capacity is 512 bytes.
 
 ```js
@@ -100,16 +104,16 @@ No third-party libraries. If the board is wedged, `tools/reboot_bootloader.py
 --upload <dir>` gets it into Caterina over CTAPHID.
 
 ```
-Flash   18066 / 28672 bytes   (63%)
-SRAM      678 / 2560  static
-EEPROM    676 / 1024  used
+Flash   17826 / 28672 bytes   (62%)
+SRAM     1304 / 2560  static, 977 peak stack, 279 free
+EEPROM     40 / 1024  used
 ```
 
 ## Test
 
 ```sh
 python3 -m venv /tmp/v && /tmp/v/bin/pip install cryptography
-/tmp/v/bin/python test/ctaphid_test.py          # 36 checks against the hardware
+/tmp/v/bin/python test/ctaphid_test.py          # 39 checks against the hardware
 python3 -m http.server -d test 8000             # then open localhost:8000
 g++ -O2 -o /tmp/t test/selftest.c webauthn_keyboard/sha256.cpp \
     webauthn_keyboard/cbor.cpp && /tmp/t       # SHA-256/HMAC/CBOR vectors
@@ -123,11 +127,28 @@ g++ -O2 -o /tmp/t test/selftest.c webauthn_keyboard/sha256.cpp \
 | Operation | Time |
 |---|---|
 | `getInfo` | 8 ms |
-| `makeCredential` (one 63-byte chunk) | 228 ms |
-| `getAssertion` | 148 ms |
+| `makeCredential` (one 63-byte chunk) | ~20 ms |
+| `getAssertion` | ~15 ms |
+| `authenticatorReset` (regenerates the master secret) | 0.62 s |
 | typing, per character | 24 ms |
 
-The 228 ms is EEPROM writing, not computation.
+What little remains in `makeCredential` is the 4-byte EEPROM counter write.
+
+### RAM budget
+
+Measured on the running board by painting the stack with a canary and counting
+untouched bytes after exercising every path — max-size PING, the largest
+`makeCredential`, a 4-entry `allowList`, a full 512-byte write and
+`authenticatorReset`:
+
+| | bytes |
+|---|---|
+| static (`.data` + `.bss`) | 1304 |
+| peak stack | 977 |
+| **free** | **279** |
+
+Of the static figure, 514 is the text buffer and 113 the credential slot.
+Raising `TYPEOUT_MAX` eats directly into the 279-byte margin.
 
 ## Layout
 
@@ -150,16 +171,19 @@ Credentials are **stateless**: the private key would be
 non-discoverable credentials cost zero storage. Only *discoverable* credentials
 need a slot, and there is exactly one.
 
-EEPROM map (1024 bytes):
+The text and the credential live in **RAM**, so a power cycle erases both.
+Only two things persist:
 
 ```
-0x000  4    magic "FLB2"
-0x004  32   master secret
-0x024  4    signature counter
-0x028  113  the single discoverable-credential slot
-0x0A0  2    type-out text length
-0x0A4  512  type-out text (plaintext ASCII)
+EEPROM (1024 bytes, 916 unused)
+  0x000  4    magic "FLB3"
+  0x004  32   master secret
+  0x024  4    signature counter
 ```
+
+The credential slot is volatile for consistency as much as for secrecy: it
+holds a copy of the text in its user handle, so a persistent credential would
+report stale text after a replug while the button typed nothing.
 
 USB endpoints are exactly full: CDC 3, FIDO 2, keyboard 1, of 6 available.
 
@@ -186,8 +210,11 @@ This is a bench tool, and it is **not an authenticator**. Concretely:
 - **There is no user-presence gate on CTAP operations** — any process that can
   open the HID device can drive registrations and assertions. Only the type-out
   button requires a physical press.
-- **The type-out text is stored in plaintext.** Unavoidable: a device that types
-  a secret on demand must be able to recover it. An EEPROM dump hands it over.
+- **The type-out text is held in plaintext in RAM.** Unavoidable: a device that
+  types a secret on demand must be able to recover it. It is at least not
+  written to non-volatile storage, so an unpowered chip yields nothing — but
+  anything that can read the running device's memory, or simply press the
+  button, gets it.
 - The master secret sits in EEPROM in the clear, seeded from ADC noise on
   floating pins — a weak source.
 - Anything that can reach the HID device can also reboot the board into the

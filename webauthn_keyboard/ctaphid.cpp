@@ -248,8 +248,6 @@ static void handle_packet(void)
 void ctaphid_init(void)
 {
   reset_transaction();
-  ctap_keepalive = &ctaphid_keepalive;
-  store_keepalive_hook = &ctaphid_keepalive;
 }
 
 void ctaphid_poll(void)

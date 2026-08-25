@@ -40,6 +40,3 @@ void ctap_init(void);
 // `resp` MAY alias `req` (and normally does -- see CTAP_MAX_MSG).
 uint16_t ctap_handle(const uint8_t *req, uint16_t reqLen, uint8_t *resp);
 
-// Called during long EEPROM writes so the CTAPHID layer can emit KEEPALIVE
-// frames and the host does not abandon the transaction.
-extern void (*ctap_keepalive)(void);
