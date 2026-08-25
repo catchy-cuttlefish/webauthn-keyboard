@@ -115,12 +115,25 @@ SRAM     1304 / 2560  static, 977 peak stack, 279 free
 EEPROM     40 / 1024  used
 ```
 
+## Demo page
+
+<https://catchy-cuttlefish.github.io/webauthn-keyboard/> — published from
+`test/index.html` by `.github/workflows/pages.yml`.
+
+WebAuthn needs a secure context, so the page has to be served over HTTPS or
+from `localhost`; opening the file directly will not work.
+
+Note that the relying-party id is taken from `location.hostname`, so a
+credential registered on `catchy-cuttlefish.github.io` is a different
+credential from one registered on `localhost`. The device has a single
+resident-credential slot, so switching between the two overwrites it.
+
 ## Test
 
 ```sh
 python3 -m venv /tmp/v && /tmp/v/bin/pip install cryptography
 /tmp/v/bin/python test/ctaphid_test.py          # 39 checks against the hardware
-python3 -m http.server -d test 8000             # then open localhost:8000
+python3 -m http.server -d test 8000             # or serve the page locally
 g++ -O2 -o /tmp/t test/selftest.c webauthn_keyboard/sha256.cpp \
     webauthn_keyboard/cbor.cpp && /tmp/t       # SHA-256/HMAC/CBOR vectors
 ```
