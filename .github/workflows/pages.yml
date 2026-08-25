@@ -14,6 +14,8 @@ on:
     branches: [main]
     paths:
       - 'test/index.html'
+      - 'test/keymap.js'
+      - 'test/layouts.js'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
