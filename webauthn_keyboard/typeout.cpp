@@ -7,30 +7,30 @@
 #include <Arduino.h>
 #include <avr/wdt.h>
 
-// ASCII -> USB HID usage code (US layout). Bit 7 set means "hold Left Shift".
-// Index is the ASCII value; 0x00 means "no key for this character", which is
-// how every control character and every non-ASCII byte gets skipped.
-static const uint8_t asciiToKey[128] PROGMEM = {
-  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-  0x00, 0x2B, 0x28, 0x00, 0x00, 0x00, 0x00, 0x00,   // \t \n
-  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-  0x2C, 0x9E, 0xB4, 0xA0, 0xA1, 0xA2, 0xA4, 0x34,   // space ! " # $ % & '
-  0xA6, 0xA7, 0xA5, 0xAE, 0x36, 0x2D, 0x37, 0x38,   // ( ) * + , - . /
-  0x27, 0x1E, 0x1F, 0x20, 0x21, 0x22, 0x23, 0x24,   // 0-7
-  0x25, 0x26, 0xB3, 0x33, 0xB6, 0x2E, 0xB7, 0xB8,   // 8 9 : ; < = > ?
-  0x9F, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89, 0x8A,   // @ A-G
-  0x8B, 0x8C, 0x8D, 0x8E, 0x8F, 0x90, 0x91, 0x92,   // H-O
-  0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99, 0x9A,   // P-W
-  0x9B, 0x9C, 0x9D, 0x2F, 0x31, 0x30, 0xA3, 0xAD,   // X Y Z [ \ ] ^ _
-  0x35, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A,   // ` a-g
-  0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12,   // h-o
-  0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A,   // p-w
-  0x1B, 0x1C, 0x1D, 0xAF, 0xB1, 0xB0, 0xB5, 0x00,   // x y z { | } ~ DEL
-};
-
-#define KEY_SHIFT_FLAG 0x80
-#define MOD_LSHIFT     0x02
+// The device stores a keystroke program, not text.
+//
+// USB keyboards transmit HID usage IDs -- "the key in position X" -- and the
+// host turns those into characters using whatever layout it has active. There
+// is no character encoding on the wire, so a device holding ASCII has to guess
+// the host's layout, and gets it wrong for everyone outside the US: on a Danish
+// layout usage 0x33 is 'ae', not ';', and '@' is AltGr+2 rather than Shift+2.
+//
+// So the layout mapping lives in the page that writes the text, which knows
+// (or can ask) what layout the machine uses. Because the text is volatile and
+// rewritten on every plug-in, the machine that writes it is always the machine
+// that will type it, so its layout is the right one by construction.
+//
+// Encoding, one or three bytes per keystroke:
+//
+//   b == 0x00   escape: the next two bytes are a modifier byte and a usage id.
+//               Used for AltGr and anything else that is not a plain Shift.
+//   b != 0x00   usage = b & 0x7F, and bit 7 means "hold Left Shift".
+//
+// Usage ids used for typing are all <= 0x64, so bit 7 is free and a zero byte
+// is never a valid usage.
+#define ESC_PREFIX  0x00
+#define SHIFT_FLAG  0x80
+#define MOD_LSHIFT  0x02
 
 static bool     wasDown   = false;
 static uint32_t lastEdge  = 0;
@@ -43,26 +43,33 @@ void typeout_init(void)
   wasDown = BTN_PRESSED();
 }
 
-static void type_string(void)
+static void type_program(void)
 {
   uint16_t n = store_text_len();
   if (n == 0 || !FidoHID.keyboardReady()) return;
 
   LED_ON();
 
-  for (uint16_t i = 0; i < n; i++) {
-    uint8_t c = store_text_byte(i);
-    if (c >= 128) continue;
-    uint8_t k = pgm_read_byte(&asciiToKey[c]);
-    if (k == 0) continue;
+  uint16_t i = 0;
+  while (i < n) {
+    uint8_t mod, usage;
+    uint8_t b = store_text_byte(i++);
 
-    uint8_t mod = (k & KEY_SHIFT_FLAG) ? MOD_LSHIFT : 0;
-    FidoHID.keyReport(mod, k & 0x7F);
+    if (b == ESC_PREFIX) {
+      if (i + 1 > n - 1) break;            // truncated escape; ignore the tail
+      mod   = store_text_byte(i++);
+      usage = store_text_byte(i++);
+    } else {
+      usage = b & 0x7F;
+      mod   = (b & SHIFT_FLAG) ? MOD_LSHIFT : 0;
+    }
+    if (usage == 0) continue;
+
+    FidoHID.keyReport(mod, usage);
     delay(TYPE_KEY_DELAY_MS);
-    FidoHID.keyReport(0, 0);        // release, so repeated letters register
+    FidoHID.keyReport(0, 0);        // release, so repeated keys register
     delay(TYPE_KEY_DELAY_MS);
   }
-
 
   LED_OFF();
 }
@@ -94,7 +101,7 @@ void typeout_poll(void)
     } else if (armed) {
       // Short press: type on release, so a long press never types first.
       armed = false;
-      type_string();
+      type_program();
     }
     return;
   }
@@ -104,4 +111,3 @@ void typeout_poll(void)
     enter_bootloader();
   }
 }
-

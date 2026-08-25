@@ -3,13 +3,15 @@
 <title>Write text to the key with WebAuthn</title>
 <style>
   body { font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
-         max-width: 46rem; margin: 2rem auto; padding: 0 1rem; }
+         max-width: 48rem; margin: 2rem auto; padding: 0 1rem; }
   h1 { font-size: 1.15rem; }
   textarea { width: 100%; height: 6rem; font: inherit; }
-  button { font: inherit; padding: .4rem .8rem; margin-right: .4rem; }
+  button, select { font: inherit; padding: .4rem .6rem; }
+  button { margin-right: .4rem; }
   #log { white-space: pre-wrap; background: #111; color: #ddd;
          padding: .75rem; border-radius: 4px; min-height: 8rem; }
   .warn { color: #b40; }
+  .row { margin: .6rem 0; }
   small { color: #666; }
 </style>
 
@@ -17,10 +19,21 @@
 
 <p><small>Served from <code>localhost</code> or HTTPS. The text travels in
 <code>user.id</code>, the one <code>create()</code> field a page can fill with
-arbitrary bytes that reaches the authenticator untouched &mdash; the browser
-neither hashes nor encrypts it.<br>
+arbitrary bytes that reaches the authenticator untouched.<br>
 The key stores it in RAM: <strong>unplugging erases it</strong>, so write it
 again after every plug-in.</small></p>
+
+<div class="row">
+  <label>Keyboard layout of <em>this</em> machine:
+    <select id="layout"></select>
+  </label>
+  <span id="detected"></span>
+</div>
+
+<p><small>USB keyboards send key <em>positions</em>, not characters &mdash; the
+computer decides what character each position produces. The key therefore has
+to be told which layout to aim at, and it must be the layout of the machine
+that will receive the typing.</small></p>
 
 <textarea id="data" placeholder="ASCII to store on the key..."
 >Correct-Horse_Battery+Staple</textarea>
@@ -33,41 +46,66 @@ again after every plug-in.</small></p>
 
 <div id="log"></div>
 
+<script src="layouts.js"></script>
+<script src="keymap.js"></script>
 <script>
 const $ = id => document.getElementById(id);
 const logEl = $("log");
 const enc = new TextEncoder(), dec = new TextDecoder();
 
-// user.id is capped at 64 bytes by the WebAuthn spec, and byte 0 is our
-// control byte: 0 = replace the stored text, 1 = append to it. So each
-// create() carries at most 63 bytes and longer strings need several calls.
+// user.id is capped at 64 bytes by the WebAuthn spec, and byte 0 is a control
+// byte (0 = replace, 1 = append), leaving 63 payload bytes per registration.
 const CHUNK = 63;
+// Must match TYPEOUT_MAX in the firmware.
+const CAPACITY = 512;
 
 function log(msg, cls) {
   const t = new Date().toISOString().slice(11, 19);
   logEl.innerHTML += `<span class="${cls || ""}">[${t}] ${msg}</span>\n`;
   logEl.scrollTop = logEl.scrollHeight;
 }
-
 const rand = n => crypto.getRandomValues(new Uint8Array(n));
 
-$("data").addEventListener("input", updateCount);
-function updateCount() {
-  const n = enc.encode($("data").value).length;
-  const chunks = Math.max(1, Math.ceil(n / CHUNK));
-  $("count").textContent =
-    `${n} bytes = ${chunks} registration${chunks > 1 ? "s" : ""}` +
-    (n > 512 ? "  \u2190 exceeds the 512-byte capacity" : "");
+// ------------------------------------------------------------------- UI ----
+function buildLayoutMenu() {
+  const sel = $("layout");
+  const common = document.createElement("optgroup");
+  common.label = "Common";
+  const rest = document.createElement("optgroup");
+  rest.label = "All layouts";
+  LAYOUTS.order.forEach((id, i) => {
+    const o = document.createElement("option");
+    o.value = id;
+    o.textContent = `${LAYOUTS.layouts[id].n}  (${id})`;
+    (i < LAYOUTS.common ? common : rest).appendChild(o);
+  });
+  sel.append(common, rest);
+  sel.value = localStorage.getItem("layout") || "us";
 }
-updateCount();
 
-// One create() call = one chunk written.
+function currentTable() { return tableFor($("layout").value); }
+
+function updateCount() {
+  const { bytes, unsupported } = encodeProgram($("data").value, currentTable());
+  const chunks = Math.max(1, Math.ceil(bytes.length / CHUNK));
+  let msg = `${bytes.length} of ${CAPACITY} bytes, ${chunks} registration` +
+            (chunks > 1 ? "s" : "");
+  if (bytes.length > CAPACITY) msg += "  \u2190 too long for the key";
+  if (unsupported.length) {
+    msg += `  \u2190 cannot be typed on this layout: ${unsupported.join(" ")}`;
+  }
+  $("count").textContent = msg;
+  $("count").className = (bytes.length > CAPACITY || unsupported.length) ? "warn" : "";
+}
+
+$("data").addEventListener("input", updateCount);
+
+// ---------------------------------------------------------------- device ---
 async function writeChunk(bytes, append) {
   const userId = new Uint8Array(1 + bytes.length);
   userId[0] = append ? 1 : 0;
   userId.set(bytes, 1);
-
-  const cred = await navigator.credentials.create({
+  return navigator.credentials.create({
     publicKey: {
       challenge: rand(32),
       rp: { id: location.hostname, name: "type-out demo" },
@@ -82,30 +120,38 @@ async function writeChunk(bytes, append) {
       attestation: "none",
     },
   });
-  return cred;
 }
 
 $("write").onclick = async () => {
   try {
-    const bytes = enc.encode($("data").value);
-    if (bytes.length === 0) { log("nothing to write", "warn"); return; }
+    const { bytes, unsupported } = encodeProgram($("data").value, currentTable());
+    if (!bytes.length) { log("nothing to write", "warn"); return; }
+    if (unsupported.length) {
+      log(`these characters have no key on the selected layout and will be `
+          + `skipped: ${unsupported.join(" ")}`, "warn");
+    }
+    if (bytes.length > CAPACITY) {
+      log(`${bytes.length} bytes exceeds the key's ${CAPACITY}-byte capacity`, "warn");
+      return;
+    }
     const chunks = [];
     for (let i = 0; i < bytes.length; i += CHUNK) chunks.push(bytes.slice(i, i + CHUNK));
-
-    log(`writing ${bytes.length} bytes as ${chunks.length} chunk(s)...`);
+    log(`writing ${bytes.length} bytes as ${chunks.length} chunk(s), `
+        + `layout ${$("layout").value}...`);
     for (let i = 0; i < chunks.length; i++) {
-      log(`  chunk ${i + 1}/${chunks.length} (${chunks[i].length} B)`);
       await writeChunk(chunks[i], i > 0);
+      log(`  chunk ${i + 1}/${chunks.length} (${chunks[i].length} B)`);
     }
+    localStorage.setItem("layout", $("layout").value);
     log("done - press the button on pin 7 to type it");
   } catch (e) {
     log(`write failed: ${e.name}: ${e.message}`, "warn");
   }
 };
 
-// An assertion returns the user handle, i.e. the last chunk written. That is
-// enough to confirm the key stored what we sent, but it is not a full read of
-// the slot: the firmware deliberately never hands the text back over USB.
+// An assertion returns the user handle, i.e. the last chunk written. That
+// confirms the key stored what we sent; it is not a full read of the slot,
+// because the firmware never hands the whole program back over USB.
 $("read").onclick = async () => {
   try {
     log("requesting assertion...");
@@ -120,13 +166,46 @@ $("read").onclick = async () => {
     const uh = new Uint8Array(a.response.userHandle);
     if (!uh.length) { log("no user handle returned", "warn"); return; }
     const append = uh[0] === 1;
-    log(`last chunk (${append ? "appended" : "replaced"}): `
-        + JSON.stringify(dec.decode(uh.slice(1))));
+    const text = decodeProgram(uh.slice(1), currentTable());
+    log(`last chunk (${append ? "appended" : "replaced"}) decodes as `
+        + JSON.stringify(text));
   } catch (e) {
     log(`read failed: ${e.name}: ${e.message}`, "warn");
   }
 };
 
-if (!window.PublicKeyCredential) log("this browser has no WebAuthn support", "warn");
-else if (!window.isSecureContext) log("not a secure context - use localhost or HTTPS", "warn");
+// ----------------------------------------------------------------- init ----
+async function detectLayout() {
+  if (!navigator.keyboard || !navigator.keyboard.getLayoutMap) return null;
+  let map;
+  try { map = await navigator.keyboard.getLayoutMap(); } catch { return null; }
+  const actual = {};
+  for (const code of Object.keys(PROBE)) {
+    const v = map.get(code);
+    if (v && v.length === 1) actual[code] = v.toLowerCase();
+  }
+  return identifyLayout(actual);
+}
+
+(async () => {
+  buildLayoutMenu();
+  $("layout").onchange = updateCount;
+  updateCount();
+
+  if (!window.PublicKeyCredential) log("this browser has no WebAuthn support", "warn");
+  else if (!window.isSecureContext) log("not a secure context - use localhost or HTTPS", "warn");
+
+  const found = await detectLayout();
+  if (found) {
+    if (!localStorage.getItem("layout")) {
+      $("layout").value = found;
+      updateCount();
+    }
+    $("detected").innerHTML =
+      `<small>detected: ${LAYOUTS.layouts[found].n}</small>`;
+  } else {
+    $("detected").innerHTML =
+      "<small>could not detect (Chromium only) &mdash; pick it yourself</small>";
+  }
+})();
 </script>

@@ -10,7 +10,7 @@ Run:  ./v/bin/python test/ctaphid_test.py [/dev/hidraw0]
 import os, sys, struct, time, hashlib, secrets
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tools"))
-from ctaplib import (Device, PING, cbor_dec, find_fido_hidraw,
+from ctaplib import (Device, PING, cbor_dec, find_fido_hidraw, encode_program,
                      CTAPHID_SETTEXT, CTAPHID_TEXTINFO, CTAPHID_BOOTLOADER)
 
 ok_count = 0
@@ -96,8 +96,11 @@ def main(path):
     print("\ntype-out slot written through user.id")
     cap = text_info(dev)[0]
     check("capacity reported", cap == 512, f"{cap}")
-    a = b"Correct-Horse_Battery+Staple"
-    b = b" :: appended-chunk-42!"
+    # The device stores keystrokes, not characters. Danish is used here because
+    # it needs AltGr escapes, which is where a US-only encoding would break.
+    a, _ = encode_program("Correct-Horse_Battery+Staple", "dk")
+    b, _ = encode_program(" :: appended@chunk-42!", "dk")
+    check("danish sample really does use AltGr escapes", 0x00 in b, b.hex())
     st, _ = make_credential(dev, b"\x00" + a)
     check("control byte 0 replaces", st == 0 and text_info(dev)[1] == len(a),
             f"stored={text_info(dev)[1]} want={len(a)}")

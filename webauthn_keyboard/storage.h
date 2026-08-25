@@ -41,7 +41,10 @@ uint8_t  store_rk_userid(uint8_t userId[MAX_USER_ID_LEN]);
 void     store_rk_put(const uint8_t rpIdHash[32], const uint8_t nonce[CRED_NONCE_LEN],
                       const uint8_t *userId, uint8_t userIdLen);
 
-// --- type-out text (volatile) ------------------------------------------------
+// --- type-out keystroke program (volatile) -----------------------------------
+// Bytes are HID keystrokes, not characters -- see typeout.cpp for the encoding.
+// The layout mapping is done by whoever writes the data, because USB keyboards
+// have no notion of characters at all.
 uint16_t store_text_len(void);
 uint8_t  store_text_byte(uint16_t i);
 void     store_text_set(const uint8_t *src, uint16_t len);

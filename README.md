@@ -17,6 +17,49 @@ whatever has focus. No host-side tool in the loop.
 credential — you write it again from a browser on every plug-in. That is the
 deliberate trade: nothing is left on the chip for a programmer to read.
 
+## Keyboard layouts
+
+USB keyboards transmit HID *usage ids* — "the key in position X" — never
+characters. The computer decides what character each position produces, using
+its own active layout. A device that stores characters therefore has to guess
+the layout, and gets it wrong for everyone outside the US.
+
+The mapping is done by the page instead, and the device just replays the
+result. That works here because storage is volatile: the text is rewritten on
+every plug-in, so the machine that writes it is always the machine that will
+receive the typing, and its layout is the right one by construction.
+
+The page detects the layout with `navigator.keyboard.getLayoutMap()` where that
+exists (Chromium), and otherwise offers a dropdown of 54 Latin layouts —
+the 17 most common first. Data is generated from the system's
+`xkeyboard-config` by `tools/gen_layouts.py`.
+
+Danish, for comparison with US:
+
+| char | US | Danish |
+|---|---|---|
+| `@` | Shift+2 | AltGr+2 |
+| `\` | key `0x31` | AltGr+`<` (key `0x64`, absent from US boards) |
+| `[` `]` | dedicated keys | AltGr+8 / AltGr+9 |
+| `~` | Shift+`` ` `` | dead key, then space |
+
+Note the last row: some characters need *two* keystrokes, and several need
+AltGr, which the old firmware could not emit at all.
+
+### Stored format
+
+One byte per keystroke, so a password costs about as many bytes as it has
+characters:
+
+```
+b == 0x00   escape: the next two bytes are a modifier byte and a usage id
+b != 0x00   usage = b & 0x7F, and bit 7 means "hold Left Shift"
+```
+
+Usage ids used for typing are all <= 0x64, so bit 7 is free and a zero byte is
+never a valid usage. Capacity is 512 bytes; the full printable ASCII set costs
+116 bytes on a Danish layout.
+
 ## How the text gets in
 
 `user.id` is the only `create()` field a page can fill with arbitrary bytes that
@@ -29,8 +72,8 @@ reaches the authenticator untouched. The client neither hashes it (unlike
 | `0` | replace the stored text with the remaining bytes |
 | `1` | append the remaining bytes |
 
-So one registration carries 63 bytes; longer strings take several, at ~20 ms
-each. Capacity is 512 bytes.
+So one registration carries 63 bytes of keystroke program — typically 63
+characters — and longer strings take several, at ~20 ms each.
 
 ```js
 const userId = new Uint8Array([0, ...new TextEncoder().encode("my secret")]);
@@ -128,18 +171,25 @@ credential registered on `catchy-cuttlefish.github.io` is a different
 credential from one registered on `localhost`. The device has a single
 resident-credential slot, so switching between the two overwrites it.
 
+Pick the keyboard layout of the machine that will receive the typing. Getting
+it wrong produces mangled output rather than an error, because the device only
+sends key positions.
+
 ## Test
 
 ```sh
 python3 -m venv /tmp/v && /tmp/v/bin/pip install cryptography
-/tmp/v/bin/python test/ctaphid_test.py          # 39 checks against the hardware
+/tmp/v/bin/python test/ctaphid_test.py          # 40 checks against the hardware
+node test/keymap_test.js                        # 22 checks on the layout mapping
 python3 -m http.server -d test 8000             # or serve the page locally
 g++ -O2 -o /tmp/t test/selftest.c webauthn_keyboard/sha256.cpp \
     webauthn_keyboard/cbor.cpp && /tmp/t       # SHA-256/HMAC/CBOR vectors
 ```
 
-`tools/provision.py --text "..."` writes the slot without a browser;
-`--show` reports usage; `--clear` erases it.
+`tools/provision.py --text "..." --layout dk` writes the slot without a
+browser; `--show` reports usage; `--clear` erases it; `--list-layouts` prints
+the available ids. It shares the layout data and encoder with the page, and
+`keymap_test.js` checks the two encoders cannot drift apart.
 
 ## Measured performance
 

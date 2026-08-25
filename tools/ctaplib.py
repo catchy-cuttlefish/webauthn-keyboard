@@ -4,7 +4,7 @@ Shared by test/ctaphid_test.py, tools/provision.py and
 tools/reboot_bootloader.py. Implements only what this project needs; it is not
 a general-purpose FIDO library (see python-fido2 for that).
 """
-import os, glob, struct, secrets, select
+import os, glob, json, re, base64, struct, secrets, select
 
 BROADCAST = 0xFFFFFFFF
 PING, MSG, INIT, CBOR, CANCEL, KEEPALIVE, ERROR = 0x01, 0x03, 0x06, 0x10, 0x11, 0x3B, 0x3F
@@ -157,3 +157,57 @@ class Device:
             raise RuntimeError(f"device rejected SETTEXT (0x{cmd:02x})")
 
 
+
+
+# ------------------------------------------------------- keystroke encoding --
+# The device stores keystrokes, not characters: USB keyboards transmit HID
+# usage ids and the host applies its own layout. This mirrors test/keymap.js;
+# the layout data is shared with the browser page.
+
+_LAYOUTS = None
+
+
+def _load_layouts():
+    global _LAYOUTS
+    if _LAYOUTS is None:
+        p = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                         "..", "test", "layouts.js")
+        with open(p) as f:
+            txt = f.read()
+        _LAYOUTS = json.loads(re.search(r"const LAYOUTS = (\{.*\});", txt, re.S).group(1))
+    return _LAYOUTS
+
+
+def layout_ids():
+    return _load_layouts()["order"]
+
+
+def encode_program(text, layout="us"):
+    """(program bytes, list of characters with no key on this layout)."""
+    data = _load_layouts()
+    if layout not in data["layouts"]:
+        raise SystemExit("unknown layout %r (try --list-layouts)" % layout)
+    t = base64.b64decode(data["layouts"][layout]["d"])
+
+    out, bad = bytearray(), []
+    for ch in text:
+        if ch == "\n":   seq = [(0x28, 0)]
+        elif ch == "\t": seq = [(0x2B, 0)]
+        else:
+            c = ord(ch)
+            if not (0x20 <= c <= 0x7E) or not t[(c - 0x20) * 4]:
+                if ch not in bad:
+                    bad.append(ch)
+                continue
+            i = (c - 0x20) * 4
+            seq = [(t[i], t[i + 1])]
+            if t[i + 2]:
+                seq.append((t[i + 2], t[i + 3]))
+        for usage, mod in seq:
+            if mod == 0:
+                out.append(usage)
+            elif mod == 0x02:
+                out.append(usage | 0x80)
+            else:
+                out += bytes([0x00, mod, usage])
+    return bytes(out), bad

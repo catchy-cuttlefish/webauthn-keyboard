@@ -42,7 +42,7 @@ jobs:
       - name: Assemble site
         run: |
           mkdir -p _site
-          cp test/index.html _site/index.html
+          cp test/index.html test/keymap.js test/layouts.js _site/
 
       # Requires Pages to already be set to build from GitHub Actions, in
       # Settings -> Pages -> Build and deployment -> Source. The default

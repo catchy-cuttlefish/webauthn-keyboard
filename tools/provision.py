@@ -5,14 +5,18 @@ In normal use you do NOT need this: a web page writes the text straight to the
 device through WebAuthn's user.id field (see test/index.html). This tool exists
 for bench work without a browser.
 
-    tools/provision.py --text "literal string"   # write directly
+    tools/provision.py --text "literal string" --layout dk
     tools/provision.py --show                    # capacity and stored length
     tools/provision.py --clear
+
+--layout matters: the device stores keystrokes, not characters, so the text has
+to be mapped against the keyboard layout of the machine that will receive the
+typing. Layout data comes from test/layouts.js (see tools/gen_layouts.py).
 """
 import argparse, sys, os
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from ctaplib import Device, TYPEOUT_MAX, CTAPHID_TEXTINFO
+from ctaplib import Device, TYPEOUT_MAX, CTAPHID_TEXTINFO, encode_program, layout_ids
 
 import struct
 
@@ -21,10 +25,20 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--text", help="store this literal string")
+    ap.add_argument("--layout", default="us",
+                    help="keyboard layout to map the text against (default: us)")
+    ap.add_argument("--list-layouts", action="store_true",
+                    help="print the available layout ids")
     ap.add_argument("--show", action="store_true", help="report capacity and length")
     ap.add_argument("--clear", action="store_true", help="erase the type-out slot")
     ap.add_argument("--device", help="path to the FIDO hidraw node")
     args = ap.parse_args()
+
+    if args.list_layouts:
+        ids = layout_ids()
+        for i in range(0, len(ids), 12):
+            print("  " + " ".join(ids[i:i+12]))
+        return 0
 
     dev = Device(args.device)
     dev.init()
@@ -46,22 +60,18 @@ def main():
 
     if args.text is None:
         raise SystemExit("nothing to do -- pass --text, --show or --clear")
-    data = args.text.encode()
+    data, unsupported = encode_program(args.text, args.layout)
+    if unsupported:
+        raise SystemExit("cannot be typed on layout %r: %s"
+                         % (args.layout, " ".join(unsupported)))
 
-    # The device only has a US-layout ASCII keymap; anything else would be
-    # silently skipped while typing, so refuse it here instead.
-    bad = sorted({b for b in data if not (0x20 <= b < 0x7F) and b not in (0x09, 0x0A)})
-    if bad:
-        raise SystemExit("text contains bytes the keyboard map cannot type: "
-                         + " ".join(f"0x{b:02x}" for b in bad))
     if len(data) > TYPEOUT_MAX:
         raise SystemExit(f"text is {len(data)} bytes, device limit is {TYPEOUT_MAX}")
 
     dev.set_text(data)
-    preview = data.decode("ascii", "replace")
-    if len(preview) > 60:
-        preview = preview[:57] + "..."
-    print(f"stored {len(data)} bytes: {preview!r}")
+    preview = args.text if len(args.text) <= 60 else args.text[:57] + "..."
+    print(f"stored {len(data)} bytes ({len(args.text)} chars, layout "
+          f"{args.layout}): {preview!r}")
     print("press the button on pin 7 to type it")
     return 0
 
