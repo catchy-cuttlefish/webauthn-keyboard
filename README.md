@@ -1,5 +1,11 @@
 # WebAuthn-writable USB keyboard on an ATmega32u4
 
+This is a purely vibe coded proof of concept on how you can extract data
+through Webauthn. This would make it possible to get data out from a remote
+or virtual desktop where clipboard sharing disabled but Webauthn enabled.
+
+---
+
 A CTAP2 authenticator for the Pro Micro / Leonardo that a web page can write
 ASCII into, and that types that ASCII on a button press.
 
