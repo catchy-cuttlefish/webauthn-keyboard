@@ -5,8 +5,9 @@ name: Deploy demo page
 # context, so the page cannot be opened as a file:// URL and otherwise needs a
 # local server.
 #
-# `enablement: true` below lets this workflow turn Pages on by itself the first
-# time it runs, so no manual repository setting is required.
+# One-time setup: Settings -> Pages -> Build and deployment -> Source ->
+# "GitHub Actions". The default GITHUB_TOKEN is not allowed to enable Pages,
+# so this cannot be done from the workflow.
 
 on:
   push:
@@ -43,9 +44,10 @@ jobs:
           mkdir -p _site
           cp test/index.html _site/index.html
 
+      # Requires Pages to already be set to build from GitHub Actions, in
+      # Settings -> Pages -> Build and deployment -> Source. The default
+      # GITHUB_TOKEN cannot turn Pages on by itself.
       - uses: actions/configure-pages@v5
-        with:
-          enablement: true
 
       - uses: actions/upload-pages-artifact@v3
         with:
